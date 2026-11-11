@@ -89,3 +89,32 @@ jobs:
               sleep 2
             done
             echo "Health check failed"; docker logs staging; exit 1          
+
+  deploy-production:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Compute lowercase image name
+        run: echo "IMAGE=${REGISTRY}/${IMAGE_NAME,,}" >> "$GITHUB_ENV"
+
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.PROD_HOST }}
+          username: deploy
+          key: ${{ secrets.PROD_SSH_KEY }}
+          script: |
+            set -e
+            docker pull ${{ env.IMAGE }}:${{ github.sha }}
+            docker rm -f production || true
+            docker run -d --name production --restart unless-stopped \
+              -p 3001:3000 \
+              -e APP_ENV=production -e APP_VERSION=${{ github.sha }} \
+              ${{ env.IMAGE }}:${{ github.sha }}
+            for i in 1 2 3 4 5; do
+              curl -fs http://localhost:3001/health && exit 0
+              sleep 2
+            done
+            echo "Health check failed"; docker logs production; exit 1            
